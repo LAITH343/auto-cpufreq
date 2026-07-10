@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 from typing import Any
-from auto_cpufreq.battery_scripts.shared import BatteryDevice
+from auto_cpufreq.platform.battery.shared import BatteryDevice
 
 class IdeapadBatteryDevice(BatteryDevice):
     # Support for most Lenovo Ideapad/Legion/Thinkpad conservation mode file(s).

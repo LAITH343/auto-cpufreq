@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from auto_cpufreq.battery_scripts.shared import BatteryDevice
+from auto_cpufreq.platform.battery.shared import BatteryDevice
 
 
 class AsusBatteryDevice(BatteryDevice):

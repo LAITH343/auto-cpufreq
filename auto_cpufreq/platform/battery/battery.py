@@ -3,9 +3,9 @@ from subprocess import PIPE, run
 from threading import Thread
 from time import sleep
 
-from auto_cpufreq.battery_scripts.asus import AsusBatteryDevice
-from auto_cpufreq.battery_scripts.ideapad_laptop import IdeapadBatteryDevice
-from auto_cpufreq.battery_scripts.shared import BatteryDevice
+from auto_cpufreq.platform.battery.asus import AsusBatteryDevice
+from auto_cpufreq.platform.battery.ideapad_laptop import IdeapadBatteryDevice
+from auto_cpufreq.platform.battery.shared import BatteryDevice
 
 BATTERY_APPLY_INTERVAL = 3600  # 1 hour
 

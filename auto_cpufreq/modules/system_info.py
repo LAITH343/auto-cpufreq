@@ -8,7 +8,7 @@ import psutil
 import distro
 from pathlib import Path
 from auto_cpufreq.config.config import config
-from auto_cpufreq.core import get_power_supply_ignore_list
+from auto_cpufreq.platform.power import get_power_supply_ignore_list
 from auto_cpufreq.globals import (
     AVAILABLE_GOVERNORS_SORTED,
     CPU_TEMP_SENSOR_PRIORITY,

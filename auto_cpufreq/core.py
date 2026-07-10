@@ -15,9 +15,20 @@ from warnings import filterwarnings
 
 from auto_cpufreq.config.config import config
 from auto_cpufreq.globals import (
-    ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR, SNAP_DAEMON_CHECK
+    ALL_GOVERNORS, AVAILABLE_GOVERNORS, AVAILABLE_GOVERNORS_SORTED, GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP, SNAP_DAEMON_CHECK
 )
 from auto_cpufreq.power_helper import *
+from auto_cpufreq.modules.system_info import SystemInfo
+from auto_cpufreq.platform import cpu as platform_cpu
+from auto_cpufreq.platform import sysfs as platform_sysfs
+from auto_cpufreq.platform.power import charging, get_power_supply_ignore_list
+from auto_cpufreq.policy.profile import CHARGER, BATTERY, decide_profile
+from auto_cpufreq.policy.turbo import TurboInputs, TurboDecision, LoadStatus, decide_turbo
+from auto_cpufreq.policy.settings import (
+    PlatformFacts, decide_epp, decide_epb, decide_governor,
+    PlatformProfileState, decide_platform_profile,
+    FrequencyConfigError, decide_frequencies,
+)
 
 filterwarnings("ignore")
 
@@ -38,10 +49,6 @@ CPUS = os.cpu_count()
 # Note:
 # "load1m" & "cpuload" can't be global vars and to in order to show correct data must be
 # decraled where their execution takes place
-
-# powersave/performance system load thresholds
-performance_load_threshold = (50 * CPUS) / 100
-powersave_load_threshold = (75 * CPUS) / 100
 
 # auto-cpufreq stats file path
 auto_cpufreq_stats_file = None
@@ -203,26 +210,16 @@ def turbo(value: bool = None):
     """
     Get and set turbo mode
     """
-    p_state = Path("/sys/devices/system/cpu/intel_pstate/no_turbo")
-    cpufreq = Path("/sys/devices/system/cpu/cpufreq/boost")
-    amd_pstate = Path("/sys/devices/system/cpu/amd_pstate/status")
-
-    if p_state.exists():
-        inverse = True
-        f = p_state
-    elif cpufreq.exists():
-        f = cpufreq
-        inverse = False
-    elif amd_pstate.exists():
-        amd_value = amd_pstate.read_text().strip()
-        if amd_value == "active":
-            print("CPU turbo is controlled by amd-pstate-epp driver")
-        # Basically, no other value should exist.
-        return False
-    else:
+    control = platform_cpu.detect_turbo_control()
+    if control is None:
+        if platform_cpu.is_amd_pstate():
+            if platform_cpu.amd_pstate_active():
+                print("CPU turbo is controlled by amd-pstate-epp driver")
+            # Basically, no other value should exist.
+            return False
         print("Warning: CPU turbo is not available")
         return False
-    
+
     turbo_override = get_turbo_override()
     if turbo_override != "auto":
         # Set the value in respect to if turbo override is enabled or not.
@@ -232,79 +229,19 @@ def turbo(value: bool = None):
             value = False
 
     if value is not None:
-        try: f.write_text(f"{int(value ^ inverse)}\n")
-        except PermissionError:
+        if not platform_cpu.set_turbo(value):
             print("Warning: Changing CPU turbo is not supported. Skipping.")
             return False
 
-    return bool(int(f.read_text().strip())) ^ inverse
+    return bool(platform_cpu.get_turbo())
 
 def get_turbo(): print("Currently turbo boost is:", "on" if turbo() else "off")
 def set_turbo(value:bool):
     print("Setting turbo boost:", "on" if value else "off")
     turbo(value)
 
-
-# ignore these devices under /sys/class/power_supply/
-def get_power_supply_ignore_list():
-
-    conf = config.get_config()
-
-    list = []
-
-    if conf.has_section("power_supply_ignore_list"):
-        for i in conf["power_supply_ignore_list"]:
-            list.append(conf["power_supply_ignore_list"][i])
-
-    # these are hard coded power supplies that will always be ignored
-    list.append("hidpp_battery")
-    return list
-
-
-def charging():
-    """
-    get charge state: is battery charging or discharging
-    """
-    # sort it so AC is 'always' first
-    if os.path.exists(Path(POWER_SUPPLY_DIR)):
-        power_supplies = sorted(os.listdir(Path(POWER_SUPPLY_DIR)))
-    else: return True # no sysfs entries, nothing to do.
-    POWER_SUPPLY_IGNORELIST = get_power_supply_ignore_list()
-
-    # check if we found power supplies. on a desktop these are not found and we assume we are on a powercable.
-    if len(power_supplies) == 0: return True # nothing found, so nothing to check
-
-    # we found some power supplies, lets check their state
-    for supply in power_supplies:
-        # Check if supply is in ignore list, if found in ignore list, skip it.
-        if any(item in supply for item in POWER_SUPPLY_IGNORELIST): continue
-
-        power_supply_type_path = Path(POWER_SUPPLY_DIR + supply + "/type")
-        if not power_supply_type_path.exists(): continue
-        with open(power_supply_type_path) as f: supply_type = f.read()[:-1]
-
-        if supply_type == "Mains":
-            # we found an AC
-            power_supply_online_path = Path(POWER_SUPPLY_DIR + supply + "/online")
-            if not power_supply_online_path.exists(): continue
-            with open(power_supply_online_path) as f:
-                if int(f.read()[:-1]) == 1: return True # we are definitely charging
-        elif supply_type == "Battery":
-            # we found a battery, check if its being discharged
-            power_supply_status_path = Path(POWER_SUPPLY_DIR + supply + "/status")
-            if not power_supply_status_path.exists(): continue
-            with open(power_supply_status_path) as f:
-                # we found a discharging battery
-                if str(f.read()[:-1]) == "Discharging": return False
-
-    return True # we cannot determine discharging state, assume we are on powercable
-
 def get_current_gov():
-    return print(
-        "Currently using:",
-        getoutput("cpufreqctl.auto-cpufreq --governor").strip().split(" ")[0],
-        "governor",
-    )
+    return print("Currently using:", platform_sysfs.get_governor(), "governor")
 
 def cpufreqctl():
     """
@@ -359,36 +296,6 @@ def deploy_daemon():
 
     tuned_svc_disable()
 
-    tlp_service_detect() # output warning if TLP service is detected
-
-    call("/usr/local/bin/auto-cpufreq-install", shell=True)
-
-def deploy_daemon_performance():
-    print("\n" + "-" * 21 + " Deploying auto-cpufreq as a daemon (performance) " + "-" * 22 + "\n")
-
-    # check that performance is in scaling_available_governors
-    if "performance" not in AVAILABLE_GOVERNORS_SORTED:
-        print("\"performance\" governor is unavailable on this system, run:\n"
-            "sudo sudo auto-cpufreq --install\n\n"
-            "to install auto-cpufreq using default \"balanced\" governor.\n")
-
-    cpufreqctl() # deploy cpufreqctl script func call
-
-    bluetooth_disable() # turn off bluetooth on boot
-
-    auto_cpufreq_stats_path.touch(exist_ok=True)
-
-    print("\n* Deploy auto-cpufreq install script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-install.sh", "/usr/local/bin/auto-cpufreq-install")
-
-    print("\n* Deploy auto-cpufreq remove script")
-    copy(SCRIPTS_DIR / "auto-cpufreq-remove.sh", "/usr/local/bin/auto-cpufreq-remove")
-
-    # output warning if gnome power profile is running
-    gnome_power_detect_install()
-    #"gnome_power_svc_disable_performance" is not defined
-    #gnome_power_svc_disable_performance()
-   
     tlp_service_detect() # output warning if TLP service is detected
 
     call("/usr/local/bin/auto-cpufreq-install", shell=True)
@@ -473,6 +380,111 @@ def get_load():
 
 def display_system_load_avg(): print(" (load average: {:.2f}, {:.2f}, {:.2f})".format(*os.getloadavg()))
 
+def _conf_option(conf, section, option):
+    return conf[section][option] if conf.has_option(section, option) else None
+
+
+def gather_platform_facts() -> PlatformFacts:
+    """Read the sysfs facts the policy/settings.py decisions need."""
+    intel_present = platform_cpu.is_intel_pstate()
+    amd_present = platform_cpu.is_amd_pstate()
+    if intel_present:
+        active_status = platform_sysfs.intel_pstate_status()
+    elif amd_present:
+        active_status = platform_sysfs.get_amd_pstate_status()
+    else:
+        active_status = None
+
+    return PlatformFacts(
+        epp_supported=platform_sysfs.epp_supported(),
+        intel_pstate_present=intel_present,
+        amd_pstate_present=amd_present,
+        dynboost_enabled=platform_sysfs.hwp_dynamic_boost_enabled(),
+        active_pstate_status=active_status,
+    )
+
+
+# module state carried across ticks (mirrors engine state in future phases)
+_last_applied_platform_profile: dict = {}
+
+
+def apply_platform_profile(conf, profile):
+    global _last_applied_platform_profile
+
+    state = PlatformProfileState(
+        last_applied=_last_applied_platform_profile,
+        last_applied_section=last_applied_config_section,
+    )
+    decision = decide_platform_profile(conf, profile, platform_sysfs.platform_profile_supported(), state)
+    for message in decision.messages:
+        print(message)
+
+    if not decision.should_set:
+        return
+
+    if platform_sysfs.set_platform_profile(decision.value):
+        _last_applied_platform_profile = {**_last_applied_platform_profile, profile: decision.value}
+    else:
+        print(f"Failed to set platform profile to {decision.value}")
+
+
+def apply_energy_perf_bias(conf, profile, intel_pstate_present):
+    configured_epb = _conf_option(conf, profile, "energy_perf_bias")
+    epb, message = decide_epb(profile, configured_epb, intel_pstate_present)
+    print(message)
+    if epb is not None:
+        platform_sysfs.set_epb(epb)
+
+
+def apply_energy_perf_preference(conf, profile, gov, facts):
+    configured_epp = _conf_option(conf, profile, "energy_performance_preference")
+    decision = decide_epp(profile, gov, configured_epp, facts)
+    for message in decision.messages:
+        print(message)
+    if decision.epp is not None:
+        platform_sysfs.set_epp(decision.epp)
+
+
+def build_turbo_inputs(profile, cpuload, load1m) -> TurboInputs:
+    return TurboInputs(
+        profile=profile,
+        cpu_count=CPUS,
+        cpu_percent=psutil.cpu_percent(percpu=False, interval=0.01),
+        max_percpu_percent=max(psutil.cpu_percent(percpu=True, interval=0.01)),
+        cpuload=cpuload,
+        load1m=load1m,
+        avg_temp=SystemInfo.avg_temp(),
+    )
+
+
+def _report_turbo_decision(inputs: TurboInputs, decision: TurboDecision):
+    print(decision.load_status.value, end="")
+    display_system_load_avg()
+    if not decision.turbo_on:
+        print(f"Optimal total CPU usage: {inputs.cpuload}%, high average core temp: {inputs.avg_temp}°C")
+
+
+def apply_turbo(profile, cpuload, load1m):
+    inputs = build_turbo_inputs(profile, cpuload, load1m)
+    decision = decide_turbo(inputs)
+    _report_turbo_decision(inputs, decision)
+    set_turbo(decision.turbo_on)
+
+
+def apply_turbo_override_or(profile, conf, cpuload, load1m):
+    auto = _conf_option(conf, profile, "turbo") or "auto"
+    auto = get_turbo_override() if (get_turbo_override() != "auto") else auto  # Override turbo if override file is present, otherwise stick to config.
+
+    if auto == "always":
+        print("Configuration file enforces turbo boost")
+        set_turbo(True)
+    elif auto == "never":
+        print("Configuration file disables turbo boost")
+        set_turbo(False)
+    else:
+        apply_turbo(profile, cpuload, load1m)
+
+
 # set minimum and maximum CPU frequencies
 def set_frequencies(power_supply):
     """
@@ -482,337 +494,67 @@ def set_frequencies(power_supply):
     Frequency setting is validated on each run and only applied when needed
     Caller passes the active profile ("battery" or "charger").
     """
-    frequency = {
-        "scaling_max_freq": {
-            "cmdargs": "--frequency-max",
-            "minmax": "maximum",
-        },
-        "scaling_min_freq": {
-            "cmdargs": "--frequency-min",
-            "minmax": "minimum",
-        },
-    }
-    set_frequencies.max_limit = int(getoutput(f"cpufreqctl.auto-cpufreq --frequency-max-limit"))
-    set_frequencies.min_limit = int(getoutput(f"cpufreqctl.auto-cpufreq --frequency-min-limit"))
+    max_limit = platform_sysfs.get_frequency_max_limit()
+    min_limit = platform_sysfs.get_frequency_min_limit()
+    set_frequencies.max_limit = max_limit
+    set_frequencies.min_limit = min_limit
 
     conf = config.get_config()
 
-    for freq_type in frequency.keys():
-        if freq_type == "scaling_max_freq":
-            curr_freq = int(getoutput(f"cpufreqctl.auto-cpufreq --frequency-max"))
-            value = set_frequencies.max_limit
-        else:
-            curr_freq = int(getoutput(f"cpufreqctl.auto-cpufreq --frequency-min"))
-            value = set_frequencies.min_limit
+    try:
+        decision = decide_frequencies(conf, power_supply, min_limit, max_limit)
+    except FrequencyConfigError as e:
+        print(str(e))
+        exit(1)
 
-        try:
-            if conf.has_option(power_supply, freq_type):
-                raw_value = conf[power_supply][freq_type].strip()
-                frequency[freq_type]["value"] = int(raw_value)
-            else:
-                frequency[freq_type]["value"] = value
-        except ValueError:
-            print(f"Invalid value for '{freq_type}': {raw_value}")
-            exit(1)
+    if platform_sysfs.get_frequency_max() != decision.max_value:
+        print(f'Setting maximum CPU frequency to {round(decision.max_value/1000)} Mhz')
+        platform_sysfs.set_frequency_max(decision.max_value)
 
-        if not set_frequencies.min_limit <= frequency[freq_type]["value"] <= set_frequencies.max_limit:
-            print(
-                f"Given value for '{freq_type}' is not within the allowed frequencies {set_frequencies.min_limit}-{set_frequencies.max_limit} kHz"
-            )
-            exit(1)
-
-        if curr_freq == frequency[freq_type]["value"]: continue
-
-        print(f'Setting {frequency[freq_type]["minmax"]} CPU frequency to {round(frequency[freq_type]["value"]/1000)} Mhz')
-        # set the frequency
-        run(f"cpufreqctl.auto-cpufreq {frequency[freq_type]['cmdargs']} --set={frequency[freq_type]['value']}", shell=True)
-
-def set_platform_profile(conf, profile):
-    if not conf.has_option(profile, "platform_profile"):
-        return
-
-    if not Path("/sys/firmware/acpi/platform_profile").exists():
-        print('Not setting Platform Profile (not supported by system)')
-        return
-
-    pp = conf[profile]["platform_profile"]
-
-    if not hasattr(set_platform_profile, "last_applied_platform_profile"):
-        set_platform_profile.last_applied_platform_profile = {}
-
-    def is_platform_profile_enforced():
-        try:
-            return conf.getboolean(profile, "enforce_platform_profile", fallback=True)
-        except ValueError:
-            raw_value = conf[profile].get("enforce_platform_profile", "")
-            print(
-                f"Invalid boolean value for 'enforce_platform_profile' in profile '{profile}': "
-                f"{raw_value!r}. Using default value True."
-            )
-            return True
-
-    global last_applied_config_section
-    if (
-        not is_platform_profile_enforced()
-        and last_applied_config_section == profile
-        and set_platform_profile.last_applied_platform_profile.get(profile) == pp
-    ):
-        return
-
-    print(f'Setting to use: "{pp}" Platform Profile')
-    result = run(f"cpufreqctl.auto-cpufreq --pp --set={pp}", shell=True)
-    if result.returncode != 0:
-        print(f"Failed to set platform profile to {pp}")
-        return
-    set_platform_profile.last_applied_platform_profile[profile] = pp
-
-def set_energy_perf_bias(conf, profile):
-    if Path("/sys/devices/system/cpu/intel_pstate").exists() is False:
-        print('Not setting EPB (not supported by system)')
-        return
-    epb = "balance_performance" if profile == "charger" else "balance_power"
-    if conf.has_option(profile, "energy_perf_bias"):
-        epb = conf[profile]["energy_perf_bias"]
-
-    run(f"cpufreqctl.auto-cpufreq --epb --set={epb}", shell=True)
-    print(f'Setting to use: "{epb}" EPB')
+    if platform_sysfs.get_frequency_min() != decision.min_value:
+        print(f'Setting minimum CPU frequency to {round(decision.min_value/1000)} Mhz')
+        platform_sysfs.set_frequency_min(decision.min_value)
 
 
 def set_powersave():
     conf = config.get_config()
-    gov = conf["battery"]["governor"] if conf.has_option("battery", "governor") else AVAILABLE_GOVERNORS_SORTED[-1]
+    gov = decide_governor(BATTERY, _conf_option(conf, "battery", "governor"), AVAILABLE_GOVERNORS_SORTED)
     print(f'Setting to use: "{gov}" governor')
     if get_override() != "default": print("Warning: governor overwritten using `--force` flag.")
-    run(f"cpufreqctl.auto-cpufreq --governor --set={gov}", shell=True)
+    platform_sysfs.set_governor(gov)
 
-    if Path("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").exists() is False:
-        print('Not setting EPP (not supported by system)')
-    else:
-        dynboost_enabled = Path("/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost").exists()
-
-        if dynboost_enabled:
-            dynboost_enabled = bool(int(
-                os.popen("cat /sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost").read()
-            ))
-
-        if dynboost_enabled: print('Not setting EPP (dynamic boosting is enabled)')
-        else:
-            if conf.has_option("battery", "energy_performance_preference"):
-                epp = conf["battery"]["energy_performance_preference"]
-                run(f"cpufreqctl.auto-cpufreq --epp --set={epp}", shell=True)
-                print(f'Setting to use: "{epp}" EPP')
-            else:
-                run("cpufreqctl.auto-cpufreq --epp --set=balance_power", shell=True)
-                print('Setting to use: "balance_power" EPP')
-
-    set_energy_perf_bias(conf, "battery")
-    set_platform_profile(conf, "battery")
+    facts = gather_platform_facts()
+    apply_energy_perf_preference(conf, "battery", gov, facts)
+    apply_energy_perf_bias(conf, "battery", facts.intel_pstate_present)
+    apply_platform_profile(conf, "battery")
     global last_applied_config_section
     last_applied_config_section = "battery"
 
-
-    cpuload, load1m= get_load()
-
-    auto = conf["battery"]["turbo"] if conf.has_option("battery", "turbo") else "auto"
-    auto = get_turbo_override() if (get_turbo_override() != "auto") else auto # Override turbo if override file is present, otherwise stick to config.
-
-    if auto == "always":
-        print("Configuration file enforces turbo boost")
-        set_turbo(True)
-    elif auto == "never":
-        print("Configuration file disables turbo boost")
-        set_turbo(False)
-    else:
-        if psutil.cpu_percent(percpu=False, interval=0.01) >= 30.0 or isclose(
-            max(psutil.cpu_percent(percpu=True, interval=0.01)), 100
-        ): print("High CPU load", end="")
-        elif load1m > powersave_load_threshold: print("High system load", end="")
-        else: print("Load optimal", end="")
-        display_system_load_avg()
-
-        if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-        else: # set turbo state based on average of all core temperatures
-            from auto_cpufreq.modules.system_info import SystemInfo
-
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            set_turbo(False)
+    cpuload, load1m = get_load()
+    apply_turbo_override_or("battery", conf, cpuload, load1m)
 
     set_frequencies("battery")
     footer()
 
-def mon_powersave():
-    cpuload, load1m = get_load()
-
-    if psutil.cpu_percent(percpu=False, interval=0.01) >= 30.0 or isclose(
-        max(psutil.cpu_percent(percpu=True, interval=0.01)), 100
-    ): print("High CPU load", end="")
-    elif load1m > powersave_load_threshold: print("High system load", end="")
-    else: print("Load optimal", end="")
-    display_system_load_avg()
-
-    if cpuload >= 20: print("suggesting to set turbo boost: on") # high cpu usage trigger
-    else: # set turbo state based on average of all core temperatures
-        from auto_cpufreq.modules.system_info import SystemInfo
-
-        print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-        print("suggesting to set turbo boost: off")
-    get_turbo()
-
-    footer()
-
 def set_performance():
     conf = config.get_config()
-    gov = conf["charger"]["governor"] if conf.has_option("charger", "governor") else AVAILABLE_GOVERNORS_SORTED[0]
+    gov = decide_governor(CHARGER, _conf_option(conf, "charger", "governor"), AVAILABLE_GOVERNORS_SORTED)
 
     print(f'Setting to use: "{gov}" governor')
     if get_override() != "default": print("Warning: governor overwritten using `--force` flag.")
-    run("cpufreqctl.auto-cpufreq --governor --set="+gov, shell=True)
+    platform_sysfs.set_governor(gov)
 
-    if not Path("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference").exists():
-        print('Not setting EPP (not supported by system)')
-    else:
-        if Path("/sys/devices/system/cpu/intel_pstate").exists():
-            dynboost_enabled = Path("/sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost").exists()
-
-            if dynboost_enabled:
-                dynboost_enabled = bool(int(
-                    os.popen("cat /sys/devices/system/cpu/intel_pstate/hwp_dynamic_boost").read()
-                ))
-
-            if dynboost_enabled: print('Not setting EPP (dynamic boosting is enabled)')
-            else:
-                intel_pstate_status_path = "/sys/devices/system/cpu/intel_pstate/status"
-
-                if conf.has_option("charger", "energy_performance_preference"):
-                    epp = conf["charger"]["energy_performance_preference"]
-
-                    if Path(intel_pstate_status_path).exists() and open(intel_pstate_status_path, 'r').read().strip() == "active" and epp != "performance" and gov == "performance":
-                        print(f'Warning "{epp}" EPP cannot be used in performance governor')
-                        print('Overriding EPP to "performance"')
-                        epp = "performance"
-
-                    run(f"cpufreqctl.auto-cpufreq --epp --set={epp}", shell=True)
-                    print(f'Setting to use: "{epp}" EPP')
-                else:
-                    if Path(intel_pstate_status_path).exists() and open(intel_pstate_status_path, 'r').read().strip() == "active":
-                        run("cpufreqctl.auto-cpufreq --epp --set=performance", shell=True)
-                        print('Setting to use: "performance" EPP')
-                    else:
-                        run("cpufreqctl.auto-cpufreq --epp --set=balance_performance", shell=True)
-                        print('Setting to use: "balance_performance" EPP')
-        elif Path("/sys/devices/system/cpu/amd_pstate").exists():
-            amd_pstate_status_path = "/sys/devices/system/cpu/amd_pstate/status"
-
-            if conf.has_option("charger", "energy_performance_preference"):
-                epp = conf["charger"]["energy_performance_preference"]
-
-                if Path(amd_pstate_status_path).exists() and open(amd_pstate_status_path, 'r').read().strip() == "active" and epp != "performance" and gov == "performance":
-                    print(f'Warning "{epp} EPP cannot be used in performance governor')
-                    print('Overriding EPP to "performance"')
-                    epp = "performance"
-
-                run(f"cpufreqctl.auto-cpufreq --epp --set={epp}", shell=True)
-                print(f'Setting to use: "{epp}" EPP')
-            else:
-                if Path(amd_pstate_status_path).exists() and open(amd_pstate_status_path, 'r').read().strip() == "active":
-                    run("cpufreqctl.auto-cpufreq --epp --set=performance", shell=True)
-                    print('Setting to use: "performance" EPP')
-                else:
-                    run("cpufreqctl.auto-cpufreq --epp --set=balance_performance", shell=True)
-                    print('Setting to use: "balance_performance" EPP')
-    
-    set_energy_perf_bias(conf, "charger")
-    set_platform_profile(conf, "charger")
+    facts = gather_platform_facts()
+    apply_energy_perf_preference(conf, "charger", gov, facts)
+    apply_energy_perf_bias(conf, "charger", facts.intel_pstate_present)
+    apply_platform_profile(conf, "charger")
     global last_applied_config_section
     last_applied_config_section = "charger"
 
     cpuload, load1m = get_load()
-    auto = conf["charger"]["turbo"] if conf.has_option("charger", "turbo") else "auto"
-    auto = get_turbo_override() if (get_turbo_override() != "auto") else auto # Override turbo if override file is present, otherwise stick to config.
+    apply_turbo_override_or("charger", conf, cpuload, load1m)
 
-    if auto == "always":
-        print("Configuration file enforces turbo boost")
-        set_turbo(True)
-    elif auto == "never":
-        print("Configuration file disables turbo boost")
-        set_turbo(False)
-    else:
-        from auto_cpufreq.modules.system_info import SystemInfo
-
-        if (
-            psutil.cpu_percent(percpu=False, interval=0.01) >= 20.0
-            or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
-        ):
-            print("High CPU load", end=""), display_system_load_avg()
-
-            if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            elif SystemInfo.avg_temp() >= 70: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-                set_turbo(False)
-            else: set_turbo(True)
-        elif load1m >= performance_load_threshold:
-
-            print("High system load", end=""), display_system_load_avg()
-            if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            elif SystemInfo.avg_temp() >= 65: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-                set_turbo(False)
-            else: set_turbo(True)
-        else:
-            print("Load optimal", end=""), display_system_load_avg()
-            if cpuload >= 20: set_turbo(True) # high cpu usage trigger
-            else: # set turbo state based on average of all core temperatures
-                print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-                set_turbo(False)
     set_frequencies("charger")
-    footer()
-
-def mon_performance():
-    from auto_cpufreq.modules.system_info import SystemInfo
-    cpuload, load1m = get_load()
-
-    if (
-        psutil.cpu_percent(percpu=False, interval=0.01) >= 20.0
-        or max(psutil.cpu_percent(percpu=True, interval=0.01)) >= 75
-    ):
-        print("High CPU load", end=""), display_system_load_avg()
-        
-
-        if cpuload >= 20: # high cpu usage trigger
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-        # set turbo state based on average of all core temperatures
-        elif cpuload <= 25 and SystemInfo.avg_temp() >= 70:
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            print("suggesting to set turbo boost: off")
-            get_turbo()
-        else:
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-    elif load1m > performance_load_threshold:
-        print("High system load", end=""), display_system_load_avg()
-        if cpuload >= 20: # high cpu usage trigger
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-        elif cpuload <= 25 and SystemInfo.avg_temp() >= 65: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            print("suggesting to set turbo boost: off")
-            get_turbo()
-        else:
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-    else:
-        print("Load optimal", end=""), display_system_load_avg()
-        if cpuload >= 20: # high cpu usage trigger
-            print("suggesting to set turbo boost: on")
-            get_turbo()
-        elif cpuload <= 25 and SystemInfo.avg_temp() >= 60: # set turbo state based on average of all core temperatures
-            print(f"Optimal total CPU usage: {cpuload}%, high average core temp: {SystemInfo.avg_temp()}°C")
-            print("suggesting to set turbo boost: off")
-            get_turbo()
-        else:
-            print("suggesting to set turbo boost: on")
-            get_turbo()
     footer()
 
 def set_autofreq():
@@ -823,33 +565,13 @@ def set_autofreq():
 
     # determine which governor should be used
     override = get_override()
-    if override == "powersave": set_powersave()
-    elif override == "performance": set_performance()
-    elif charging():
-        print("Battery is: charging\n")
-        set_performance()
-    else:
-        print("Battery is: discharging\n")
-        set_powersave()
+    is_charging = charging()
+    if override == "default":
+        print(f"Battery is: {'charging' if is_charging else 'discharging'}\n")
 
-def mon_autofreq():
-    """
-    make cpufreq suggestions
-    :return:
-    """
-    print("\n" + "-" * 28 + " CPU frequency scaling " + "-" * 28 + "\n")
-
-    # determine which governor should be used
-    if charging():
-        print("Battery is: charging\n")
-        get_current_gov()
-        print(f'Suggesting use of "{AVAILABLE_GOVERNORS_SORTED[0]}" governor')
-        mon_performance()
-    else:
-        print("Battery is: discharging\n")
-        get_current_gov()
-        print(f'Suggesting use of "{AVAILABLE_GOVERNORS_SORTED[-1]}" governor')
-        mon_powersave()
+    profile = decide_profile(override, is_charging)
+    if profile == CHARGER: set_performance()
+    else: set_powersave()
 
 def python_info():
     print("Python:", platform.python_version())
@@ -899,7 +621,7 @@ def sysinfo():
     print("Architecture:", cpu_arch)
 
     # get driver
-    driver = getoutput("cpufreqctl.auto-cpufreq --driver")
+    driver = platform_sysfs.scaling_driver()
     print("Driver: " + driver)
 
     config_path = config.path if config.has_config() else None

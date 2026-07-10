@@ -9,7 +9,7 @@ import sys, time, os
 from subprocess import run
 from shutil import rmtree
 
-from auto_cpufreq.battery_scripts.battery import *
+from auto_cpufreq.platform.battery.battery import *
 from auto_cpufreq.config.config import config as conf, find_config_file
 from auto_cpufreq.core import *
 from auto_cpufreq.globals import GITHUB, IS_INSTALLED_WITH_AUR, IS_INSTALLED_WITH_SNAP
