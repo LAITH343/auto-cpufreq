@@ -708,6 +708,12 @@ Since the config is generated from `programs.auto-cpufreq.settings`, client apps
 
 See [docs/dbus-api.md](docs/dbus-api.md) for the API reference.
 
+[auto-cpufreq client](https://github.com/LAITH343/auto-cpufreq-client) is a desktop app that uses this interface. Install it for the current user with:
+
+```
+curl -fsSL https://github.com/LAITH343/auto-cpufreq-client/releases/latest/download/install.sh | bash
+```
+
 ## Intel HWP Dynamic Boost
 
 On typical non-server Intel systems, the Linux `intel_pstate` driver starts HWP Dynamic Boost disabled. When `hwp_dynamic_boost` is not explicitly configured, auto-cpufreq keeps it disabled on battery power and enables it on AC/charger power on supported systems. Current upstream kernels may enable Dynamic Boost automatically on systems using the ACPI Enterprise Server or Performance Server profiles.
