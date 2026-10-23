@@ -1,0 +1,48 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+<!-- See docs/dbus-api.md for the keys of each a{sv} and a{ss} -->
+<node name="/org/autocpufreq/Daemon">
+  <interface name="org.autocpufreq.Daemon">
+    <method name="GetStatus">
+      <arg name="status" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetReport">
+      <arg name="report" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetBattery">
+      <arg name="battery" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetOverrides">
+      <arg name="overrides" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetConfig">
+      <arg name="config" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetBatteryConfig">
+      <arg name="battery_config" type="a{sv}" direction="out"/>
+    </method>
+    <method name="GetCapabilities">
+      <arg name="capabilities" type="a{sv}" direction="out"/>
+    </method>
+    <method name="SetGovernorOverride">
+      <arg name="value" type="s" direction="in"/>
+    </method>
+    <method name="SetTurboOverride">
+      <arg name="value" type="s" direction="in"/>
+    </method>
+    <method name="ResetOverrides"/>
+    <method name="SetConfigSection">
+      <arg name="section" type="s" direction="in"/>
+      <arg name="values" type="a{ss}" direction="in"/>
+    </method>
+    <method name="SetIgnoreList">
+      <arg name="names" type="as" direction="in"/>
+    </method>
+    <method name="SetBatteryConfig">
+      <arg name="values" type="a{ss}" direction="in"/>
+    </method>
+    <method name="SetBluetoothBoot">
+      <arg name="enabled" type="b" direction="in"/>
+    </method>
+  </interface>
+</node>
