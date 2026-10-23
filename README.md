@@ -697,6 +697,15 @@ The service starts on demand when a client calls it and exits when idle, so noth
 
 `sudo auto-cpufreq --remove` also removes it. The D-Bus interface is not available for the Snap package.
 
+On NixOS, enable it through the [flake module](#nixos) instead and add users to the group in your configuration:
+
+```nix
+programs.auto-cpufreq.dbusInterface.enable = true;
+users.users.<name>.extraGroups = [ "auto-cpufreq" ];
+```
+
+Since the config is generated from `programs.auto-cpufreq.settings`, client apps can read it but not edit it on NixOS.
+
 See [docs/dbus-api.md](docs/dbus-api.md) for the API reference.
 
 ## Intel HWP Dynamic Boost

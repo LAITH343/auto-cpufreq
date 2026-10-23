@@ -26,6 +26,7 @@ INTERFACE_NAME = "org.autocpufreq.Daemon"
 
 ERROR_INVALID_ARGUMENT = "org.autocpufreq.Error.InvalidArgument"
 ERROR_FAILED = "org.autocpufreq.Error.Failed"
+ERROR_NOT_SUPPORTED = "org.autocpufreq.Error.NotSupported"
 
 # The bus starts the service again on the next call, so it can exit when unused.
 IDLE_TIMEOUT = 300
@@ -51,6 +52,8 @@ class DaemonInterface(ServiceInterface):
             action(*args)
         except actions.InvalidArgument as e:
             raise DBusError(ERROR_INVALID_ARGUMENT, str(e))
+        except actions.NotSupported as e:
+            raise DBusError(ERROR_NOT_SUPPORTED, str(e))
         except actions.ActionError as e:
             raise DBusError(ERROR_FAILED, str(e))
         except OSError as e:
@@ -113,8 +116,8 @@ class DaemonInterface(ServiceInterface):
         self._run(actions.set_bluetooth_boot, enabled)
 
 
-async def serve(bus_type: BusType) -> int:
-    config_path = find_config_file(None)
+async def serve(bus_type: BusType, config_file=None) -> int:
+    config_path = find_config_file(config_file)
     config.set_path(config_path)
     config.notifier.start()
 
@@ -141,4 +144,5 @@ async def serve(bus_type: BusType) -> int:
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     bus_type = BusType.SESSION if "--session" in argv else BusType.SYSTEM
-    return asyncio.run(serve(bus_type))
+    config_file = argv[argv.index("--config") + 1] if "--config" in argv[:-1] else None
+    return asyncio.run(serve(bus_type, config_file))

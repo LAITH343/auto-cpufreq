@@ -30,6 +30,7 @@ A client can tell these states apart:
 |---|---|
 | `org.autocpufreq.Error.InvalidArgument` | A value or key was rejected. The message says why and can be shown to the user. |
 | `org.autocpufreq.Error.Failed` | The action was valid but couldn't be done, for example a file couldn't be written. |
+| `org.autocpufreq.Error.NotSupported` | The config file is read-only, so `SetConfigSection`, `SetIgnoreList` and `SetBatteryConfig` can't change it. This happens on NixOS, where the config is generated from `programs.auto-cpufreq.settings`. |
 
 ## Value conventions
 
@@ -98,6 +99,7 @@ A client can tell these states apart:
 |---|---|---|
 | `path` | `s` | *always* |
 | `exists` | `b` | *always* |
+| `writable` | `b` | *always*, false when the config can't be edited over D-Bus (for example on NixOS), so show it read-only |
 | `charger`, `battery` | `a{ss}` | *always*, the `[charger]` and `[battery]` sections |
 | `ignore_list` | `as` | *always*, the `[power_supply_ignore_list]` names |
 | `bluetooth_boot` | `b` | whether Bluetooth turns on at boot |

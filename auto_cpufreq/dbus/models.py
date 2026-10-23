@@ -226,6 +226,7 @@ class ConfigModel(DbusModel):
     SIGNATURES = {
         "path": "s",
         "exists": "b",
+        "writable": "b",
         "charger": "a{ss}",
         "battery": "a{ss}",
         "ignore_list": "as",
@@ -235,6 +236,7 @@ class ConfigModel(DbusModel):
 
     path: str
     exists: bool
+    writable: bool
     charger: dict[str, str] = field(default_factory=dict)
     battery: dict[str, str] = field(default_factory=dict)
     ignore_list: list[str] = field(default_factory=list)
@@ -243,7 +245,12 @@ class ConfigModel(DbusModel):
 
     @classmethod
     def read(cls, path: str) -> "ConfigModel":
-        model = cls(path=path, exists=os.path.isfile(path), bluetooth_boot=read_bluetooth_boot())
+        model = cls(
+            path=path,
+            exists=os.path.isfile(path),
+            writable=config_writable(path),
+            bluetooth_boot=read_bluetooth_boot(),
+        )
         if not model.exists:
             return model
 
@@ -376,6 +383,12 @@ class StatusModel(DbusModel):
             version=version,
             config_path=config_path,
         )
+
+
+def config_writable(path: str) -> bool:
+    if os.path.realpath(path).startswith("/nix/store/"):
+        return False
+    return os.access(path if os.path.exists(path) else os.path.dirname(path), os.W_OK)
 
 
 def read_bluetooth_boot() -> bool | None:
