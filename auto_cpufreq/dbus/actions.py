@@ -8,7 +8,7 @@ from auto_cpufreq.battery_scripts.battery import get_battery_device
 from auto_cpufreq.battery_scripts.ideapad_laptop import IdeapadBatteryDevice
 from auto_cpufreq.config.config import config
 from auto_cpufreq.core import normalize_epb_target, set_override, set_turbo_override
-from auto_cpufreq.dbus.models import IGNORE_LIST_SECTION, PROFILE_SECTIONS, CapabilitiesModel
+from auto_cpufreq.dbus.models import IGNORE_LIST_SECTION, PROFILE_SECTIONS, CapabilitiesModel, config_writable
 from auto_cpufreq.globals import IS_INSTALLED_WITH_SNAP
 from auto_cpufreq.power_helper import set_bluetooth_auto_enable
 
@@ -44,6 +44,10 @@ class InvalidArgument(ActionError):
     pass
 
 
+class NotSupported(ActionError):
+    pass
+
+
 def set_governor_override(value: str) -> None:
     if value not in GOVERNOR_OVERRIDES:
         raise InvalidArgument(f"Governor override must be one of: {', '.join(GOVERNOR_OVERRIDES)}")
@@ -63,6 +67,7 @@ def reset_overrides() -> None:
 
 def set_config_section(path: str, section: str, values: dict[str, str]) -> None:
     """Set keys of [charger] or [battery]; an empty value removes the key."""
+    _require_writable(path)
     if section not in PROFILE_SECTIONS:
         raise InvalidArgument(f"Section must be one of: {', '.join(PROFILE_SECTIONS)}")
 
@@ -79,6 +84,7 @@ def set_config_section(path: str, section: str, values: dict[str, str]) -> None:
 
 
 def set_ignore_list(path: str, names: list[str]) -> None:
+    _require_writable(path)
     names = list(dict.fromkeys(name.strip() for name in names if name.strip()))
     for name in names:
         if "/" in name or "=" in name or name.startswith(("#", ";", "[")):
@@ -88,6 +94,7 @@ def set_ignore_list(path: str, names: list[str]) -> None:
 
 def set_battery_config(path: str, values: dict[str, str]) -> None:
     """Set battery charging keys of [battery] and apply them right away."""
+    _require_writable(path)
     capabilities = CapabilitiesModel.read()
     changes = {}
     for key, value in values.items():
@@ -111,6 +118,11 @@ def set_bluetooth_boot(enabled: bool) -> None:
         raise ActionError("Bluetooth on boot can't be changed from the snap package")
     if not set_bluetooth_auto_enable(enabled):
         raise ActionError("Unable to update /etc/bluetooth/main.conf")
+
+
+def _require_writable(path: str) -> None:
+    if not config_writable(path):
+        raise NotSupported(f"{path} is read-only, editing the config via D-Bus is not supported here")
 
 
 def _validate_profile_value(key: str, value: str, capabilities: CapabilitiesModel) -> str:

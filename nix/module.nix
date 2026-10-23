@@ -17,6 +17,40 @@ let
   inherit (lib.options) mkOption mkEnableOption;
 
   format = pkgs.formats.ini { };
+
+  dbusName = "org.autocpufreq.Daemon";
+  dbusGroup = "auto-cpufreq";
+  dbusPython = defaultPackage.pythonModule.withPackages (_: [ defaultPackage ]);
+  dbusFiles = pkgs.symlinkJoin {
+    name = "auto-cpufreq-dbus";
+    paths = [
+      (pkgs.writeTextDir "share/dbus-1/system.d/${dbusName}.conf" ''
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+         "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+        <busconfig>
+          <policy user="root">
+            <allow own="${dbusName}"/>
+            <allow send_destination="${dbusName}"/>
+          </policy>
+          <policy group="${dbusGroup}">
+            <allow send_destination="${dbusName}"/>
+          </policy>
+          <policy context="default">
+            <deny own="${dbusName}"/>
+            <deny send_destination="${dbusName}"/>
+          </policy>
+        </busconfig>
+      '')
+      (pkgs.writeTextDir "share/dbus-1/system-services/${dbusName}.service" ''
+        [D-BUS Service]
+        Name=${dbusName}
+        Exec=${pkgs.coreutils}/bin/false
+        User=root
+        SystemdService=auto-cpufreq-dbus.service
+      '')
+    ];
+  };
 in
 {
   options.programs.auto-cpufreq = {
@@ -33,6 +67,11 @@ in
       default = { };
       type = types.submodule { freeformType = format.type; };
     };
+
+    dbusInterface.enable = mkEnableOption ''
+      the D-Bus interface for client apps. Users in the `${dbusGroup}` group can use it.
+      Config edits over D-Bus are not supported, since the config is generated from `settings`
+    '';
   };
 
   config = mkIf cfg.enable {
@@ -55,7 +94,27 @@ in
           "${defaultPackage}/bin/auto-cpufreq --daemon --config ${cfgFile}"
         ];
       };
+
+      services.auto-cpufreq-dbus = mkIf cfg.dbusInterface.enable {
+        description = "auto-cpufreq D-Bus interface";
+        path = with pkgs; [
+          defaultPackage
+          bash
+          gawk
+          getent
+          kmod
+          dmidecode
+        ];
+        serviceConfig = {
+          Type = "dbus";
+          BusName = dbusName;
+          ExecStart = "${dbusPython}/bin/python -m auto_cpufreq.dbus --config ${cfgFile}";
+        };
+      };
     };
+
+    services.dbus.packages = mkIf cfg.dbusInterface.enable [ dbusFiles ];
+    users.groups.${dbusGroup} = mkIf cfg.dbusInterface.enable { };
 
     assertions = [
       {
