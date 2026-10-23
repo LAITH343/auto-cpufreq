@@ -141,6 +141,8 @@ What the machine supports. Use it to fill choices and hide controls.
 
 `auto`, `always` or `never`.
 
+Both setters only store the override. The daemon applies it on its next cycle, a few seconds later, so `active_governor` and `turbo_on` in `GetOverrides` can still show the old state right after the call.
+
 ### ResetOverrides()
 
 Sets both overrides back to `auto`.
