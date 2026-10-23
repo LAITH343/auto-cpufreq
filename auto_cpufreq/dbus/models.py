@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 from configparser import ConfigParser, Error as ConfigParserError
 from dataclasses import dataclass, field, fields
