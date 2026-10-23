@@ -42,6 +42,10 @@ User=root
 """
 
 
+def is_dbus_interface_installed() -> bool:
+    return POLICY_FILE.exists() or ACTIVATION_FILE.exists()
+
+
 def install_dbus_interface() -> bool:
     if IS_INSTALLED_WITH_SNAP:
         print("The D-Bus interface is not available for the snap package")

@@ -29,6 +29,8 @@ from threading import Thread
 @click.option("--install", is_flag=True, help="Install daemon for (permanent) automatic CPU optimizations")
 @click.option("--update", is_flag=False, help="Update daemon and package for (permanent) automatic CPU optimizations", flag_value="--update")
 @click.option("--remove", is_flag=True, help="Remove daemon for (permanent) automatic CPU optimizations")
+@click.option("--install-dbus-interface", is_flag=True, help="Install D-Bus interface for client apps and grant the current user access")
+@click.option("--remove-dbus-interface", is_flag=True, help="Remove D-Bus interface for client apps")
 @click.option("--force", is_flag=False, help="Force use of either \"powersave\" or \"performance\" governors. Setting to \"reset\" will go back to normal mode")
 @click.option("--turbo", is_flag=False, help="Force use of CPU turbo mode, if supported, with \"never\" or \"always\". Setting to \"auto\" automatically handles turbo mode")
 @click.option("--config", is_flag=False, required=False, help="Use config file at defined path",)
@@ -40,8 +42,8 @@ from threading import Thread
 @click.option("--debug", is_flag=True, help="Show debug info (include when submitting bugs)")
 @click.option("--version", is_flag=True, help="Show currently installed version")
 @click.option("--donate", is_flag=True, help="Support the project")
-def main(monitor, live, daemon, install, update, remove, force, turbo, config, stats, pp, get_state,
-          bluetooth_boot_off, bluetooth_boot_on, debug, version, donate):
+def main(monitor, live, daemon, install, update, remove, install_dbus_interface, remove_dbus_interface,
+          force, turbo, config, stats, pp, get_state, bluetooth_boot_off, bluetooth_boot_on, debug, version, donate):
     # display info if config file is used
     config_path = find_config_file(config)
     conf.set_path(config_path)
@@ -251,10 +253,23 @@ def main(monitor, live, daemon, install, update, remove, force, turbo, config, s
                 # {the following snippet also used in --update, update it there too(if required)}
                 # * undo bluetooth boot disable
                 gnome_power_rm_reminder_snap()
-            elif remove_daemon() != 0:
-                print("Failed to remove the auto-cpufreq daemon.")
-                sys.exit(1)
+            else:
+                if remove_daemon() != 0:
+                    print("Failed to remove the auto-cpufreq daemon.")
+                    sys.exit(1)
+                from auto_cpufreq.dbus.install import is_dbus_interface_installed, remove_dbus_interface as remove_interface
+                if is_dbus_interface_installed() and not remove_interface():
+                    print("Failed to remove the auto-cpufreq D-Bus interface.")
+                    sys.exit(1)
             remove_complete_msg()
+        elif install_dbus_interface:
+            root_check()
+            from auto_cpufreq.dbus.install import install_dbus_interface as install_interface
+            if not install_interface(): sys.exit(1)
+        elif remove_dbus_interface:
+            root_check()
+            from auto_cpufreq.dbus.install import remove_dbus_interface as remove_interface
+            if not remove_interface(): sys.exit(1)
         elif stats:
             not_running_daemon_check()
             config_info_dialog()
