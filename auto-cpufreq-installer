@@ -22,6 +22,8 @@ SHARE_DIR="$CURRENT_PATH/share"
 LEGACY_SHARE_DIR="/usr/local/share/auto-cpufreq"
 
 AUTO_CPUFREQ_FILE="/usr/local/bin/auto-cpufreq"
+DBUS_POLICY_FILE="/etc/dbus-1/system.d/org.autocpufreq.Daemon.conf"
+DBUS_SERVICE_FILE="/usr/share/dbus-1/system-services/org.autocpufreq.Daemon.service"
 AUTO_CPUFREQ_GTK_FILE=$AUTO_CPUFREQ_FILE-gtk
 AUTO_CPUFREQ_GTK_DESKTOP_FILE="$(basename $AUTO_CPUFREQ_GTK_FILE).desktop"
 
@@ -938,6 +940,14 @@ function tool_remove {
     fi
   else
     echo; echo "auto-cpufreq daemon is not installed; removing the source installation."
+  fi
+
+  if [ -e "$DBUS_POLICY_FILE" ] || [ -e "$DBUS_SERVICE_FILE" ]; then
+    if ! "$AUTO_CPUFREQ_FILE" --remove-dbus-interface; then
+      echo "Error: Failed to remove the auto-cpufreq D-Bus interface."
+      echo "The source installation was kept so removal can be retried."
+      return 1
+    fi
   fi
 
   # Keep the versioned source tree until every public integration path has
