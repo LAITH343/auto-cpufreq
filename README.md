@@ -72,6 +72,7 @@ Example of `auto-cpufreq --stats` CLI output (v3.2.0)
   - [stats](#stats)
   - [bluetooth_boot_off](#bluetooth_boot_off)
   - [bluetooth_boot_on](#bluetooth_boot_on)
+  - [D-Bus interface for client apps](#d-bus-interface-for-client-apps)
 - [Intel HWP Dynamic Boost](#intel-hwp-dynamic-boost)
 - [Platform Profiles](#platform-profiles)
 - [Battery charging thresholds](#battery-charging-thresholds)
@@ -543,6 +544,9 @@ auto-cpufreq can be used through the following CLI modes and the GTK interface:
 - [bluetooth_boot_on](#bluetooth_boot_on)
   - Turn on Bluetooth on boot.
 
+- [install_dbus_interface](#d-bus-interface-for-client-apps) / [remove_dbus_interface](#d-bus-interface-for-client-apps)
+  - Install/remove the D-Bus interface that lets client apps read stats and change settings without root
+
 - [force=TEXT](#overriding-governor)
   - Force use of either the "powersave" or "performance" governor, or set to "reset" to go back to normal mode
 
@@ -678,6 +682,22 @@ It prevents GNOME from automatically enabling Bluetooth on every reboot or after
 ### bluetooth_boot_on
 
 Useful if you prefer Bluetooth to be enabled at boot time, especially after installing the auto-cpufreq daemon, which will disable it by default.
+
+### D-Bus interface for client apps
+
+Client apps can read the same information as `--stats` and change overrides and config settings through a D-Bus interface on the system bus, without running as root. Install it with:
+
+`sudo auto-cpufreq --install-dbus-interface`
+
+This creates the `auto-cpufreq` group, adds the user who ran the command to it, and installs the D-Bus policy and service files. Log out and back in for the group change to take effect. To give another user access, run `sudo usermod -aG auto-cpufreq <user>`.
+
+The service starts on demand when a client calls it and exits when idle, so nothing extra runs in the background. Remove it with:
+
+`sudo auto-cpufreq --remove-dbus-interface`
+
+`sudo auto-cpufreq --remove` also removes it. The D-Bus interface is not available for the Snap package.
+
+See [docs/dbus-api.md](docs/dbus-api.md) for the API reference.
 
 ## Intel HWP Dynamic Boost
 
