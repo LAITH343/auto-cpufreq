@@ -33,6 +33,7 @@ PyGObject = {version="^3.50.0", optional=true}
 urwid = ">=3.0.2,<5.0.0"
 pyinotify = {git = "https://github.com/shadeyg56/pyinotify-3.12"}
 pyasyncore = "^1.0.4"
+dbus-fast = ">=2.24.0,<6.0.0"
 
 [tool.poetry.extras]
 gui = ["PyGObject"]

@@ -12,6 +12,7 @@
   urwid,
   pyasyncore,
   requests,
+  dbus-fast,
   pkgs,
   fetchFromGitHub,
   fetchPypi,
@@ -71,6 +72,7 @@ buildPythonPackage rec {
     pyinotifyPatched
     urwid
     pyasyncore
+    dbus-fast
     pkgs.getent
     pkgs.kmod
     pkgs.dmidecode
