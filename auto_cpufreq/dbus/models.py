@@ -18,7 +18,7 @@ from auto_cpufreq.core import (
     get_turbo_override,
     intel_pstate_active,
 )
-from auto_cpufreq.globals import AVAILABLE_GOVERNORS_SORTED, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR
+from auto_cpufreq.globals import ALL_GOVERNORS, IS_INSTALLED_WITH_SNAP, POWER_SUPPLY_DIR
 from auto_cpufreq.modules.platform_profile import platform_profile
 from auto_cpufreq.modules.system_info import BatteryInfo, CoreInfo, SystemInfo, SystemReport
 from auto_cpufreq.power_helper import bluetoothctl_exists
@@ -309,7 +309,7 @@ class CapabilitiesModel(DbusModel):
         profile = platform_profile.snapshot()
         turbo_on, turbo_amd_auto = SystemInfo.turbo_on()
         return cls(
-            governors=list(AVAILABLE_GOVERNORS_SORTED),
+            governors=_available_governors(),
             epp_choices=epp_choices.split() if epp_choices else [],
             epb=(CPU_SYSFS_ROOT / "cpu0/power/energy_perf_bias").exists(),
             hwp_dynamic_boost=HWP_DYNAMIC_BOOST_PATH.exists() and intel_pstate_active(),
@@ -425,6 +425,16 @@ def _battery_status(battery_path: str | None) -> str:
         return "unknown"
     status = status.lower().replace(" ", "-")
     return status if status in ("charging", "discharging", "not-charging", "full") else "unknown"
+
+
+def _available_governors() -> list[str]:
+    """Governors in sysfs plus those whose module the kernel loads on first use."""
+    loaded = (_read_sysfs(CPU_SYSFS_ROOT / "cpu0/cpufreq/scaling_available_governors") or "").split()
+    modules = Path("/lib/modules", os.uname().release, "kernel/drivers/cpufreq")
+    return [
+        gov for gov in ALL_GOVERNORS
+        if gov in loaded or any(modules.glob(f"cpufreq_{gov}.ko*"))
+    ]
 
 
 def _read_sysfs(path: Path) -> str | None:
